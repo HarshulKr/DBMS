@@ -1,8 +1,5 @@
-# =========================
-# IMPORTS + DB CONNECTION
-# =========================
 import mysql.connector
-import random   # ✅ FIXED
+import random
 
 conn = mysql.connector.connect(
     host="localhost",
@@ -14,205 +11,226 @@ conn = mysql.connector.connect(
 cursor = conn.cursor(dictionary=True)
 
 # =========================
-# GLOBALS
+# SAFE INPUT
 # =========================
-cart = []
+def safe_int(prompt):
+    try:
+        return int(input(prompt))
+    except:
+        print("❌ Invalid input")
+        return None
 
 # =========================
-# PRODUCT FUNCTIONS
+# LOGIN
 # =========================
-def search_products(keyword):
-    query = """
-        SELECT ProductID, ProductName, Brand, Price, Quantity
+def login():
+    while True:
+        email = input("Enter email (or exit): ")
+
+        if email.lower() == "exit":
+            return None
+
+        cursor.execute("SELECT CustomerID, Name FROM Customer WHERE Email=%s", (email,))
+        user = cursor.fetchone()
+
+        if user:
+            print(f"✅ Welcome {user['Name']}")
+            return user['CustomerID']
+        else:
+            print("❌ User not found")
+
+# =========================
+# SHOW PRODUCTS
+# =========================
+def show_products():
+    cursor.execute("""
+        SELECT ProductID, ProductName, Price, Quantity
         FROM Product
-        WHERE ProductName LIKE %s OR Brand LIKE %s
-    """
-    cursor.execute(query, (f"%{keyword}%", f"%{keyword}%"))
-    results = cursor.fetchall()
+        ORDER BY RAND()
+        LIMIT 15
+    """)
 
-    print("\n--- Search Results ---")
-    for row in results:
-        print(row)
+    for p in cursor.fetchall():
+        print(f"{p['ProductID']} | {p['ProductName']} | ₹{p['Price']} | Stock: {p['Quantity']}")
 
+# =========================
+# ADD TO CART (DB)
+# =========================
+def add_to_cart(user):
+    show_products()
 
-def add_to_cart(product_id, qty):
-    cart.append({"product_id": product_id, "qty": qty})
+    pid = safe_int("Product ID: ")
+    qty = safe_int("Quantity: ")
+
+    if not pid or not qty:
+        return
+
+    cursor.execute("""
+        INSERT INTO Cart (CustomerID, ProductID, Quantity)
+        VALUES (%s, %s, %s)
+    """, (user, pid, qty))
+
+    conn.commit()
     print("✅ Added to cart")
 
+# =========================
+# VIEW CART
+# =========================
+def view_cart(user):
+    cursor.execute("""
+        SELECT c.ProductID, p.ProductName, c.Quantity
+        FROM Cart c
+        JOIN Product p ON c.ProductID = p.ProductID
+        WHERE c.CustomerID = %s
+    """, (user,))
+
+    items = cursor.fetchall()
+
+    if not items:
+        print("❌ Cart empty")
+        return []
+
+    print("\n--- Your Cart ---")
+    for i, item in enumerate(items, 1):
+        print(f"{i}. {item['ProductName']} x{item['Quantity']}")
+
+    return items
 
 # =========================
-# ORDER FUNCTIONS
+# CHECKOUT
 # =========================
-def checkout(customer_id):
+def checkout(user):
     try:
-        total = 0   # ❌ removed start_transaction()
+        cursor.execute("""
+            SELECT c.ProductID, c.Quantity, p.Price
+            FROM Cart c
+            JOIN Product p ON c.ProductID = p.ProductID
+            WHERE c.CustomerID = %s
+        """, (user,))
 
-        for item in cart:
-            cursor.execute(
-                "SELECT Price FROM Product WHERE ProductID=%s",
-                (item['product_id'],)
-            )
-            price = cursor.fetchone()['Price']
-            total += price * item['qty']
+        items = cursor.fetchall()
+
+        if not items:
+            print("❌ Cart empty")
+            return
+
+        total = sum(i['Quantity'] * i['Price'] for i in items)
 
         store_id = random.randint(1, 10)
-        delivery_partner_id = random.randint(1, 10)
+        partner_id = random.randint(1, 10)
 
-        # ✅ FIXED column names
         cursor.execute("""
             INSERT INTO Orders 
             (OrderDateTime, OrderStatus, TotalBillAmount, CustomerID, StoreID, DeliveryPartnerID)
             VALUES (NOW(), 'Placed', %s, %s, %s, %s)
-        """, (total, customer_id, store_id, delivery_partner_id))
+        """, (total, user, store_id, partner_id))
 
         order_id = cursor.lastrowid
 
-        # 🔥 THIS triggers stock reduction automatically
-        for item in cart:
+        for item in items:
             cursor.execute("""
                 INSERT INTO OrderItem (OrderID, ProductID, QuantityOrdered)
                 VALUES (%s, %s, %s)
-            """, (order_id, item['product_id'], item['qty']))
+            """, (order_id, item['ProductID'], item['Quantity']))
+
+        # clear cart
+        cursor.execute("DELETE FROM Cart WHERE CustomerID=%s", (user,))
 
         conn.commit()
-        cart.clear()
-
-        print(f"✅ Order placed successfully! Order ID: {order_id}")
+        print(f"✅ Order placed! ID: {order_id}")
 
     except Exception as e:
         conn.rollback()
         print("❌ Error:", e)
 
-
-def cancel_order(order_id):
-    try:
-        cursor.execute("SELECT OrderStatus FROM Orders WHERE OrderID=%s", (order_id,))
-        result = cursor.fetchone()
-
-        if not result:
-            raise Exception("Order not found")
-
-        if result['OrderStatus'] == 'Delivered':
-            raise Exception("Cannot cancel delivered order")
-
-        # Update order status
-        cursor.execute("""
-            UPDATE Orders
-            SET OrderStatus = 'Cancelled'
-            WHERE OrderID = %s
-        """, (order_id,))
-
-        # Restore stock (manual — correct)
-        cursor.execute("""
-            SELECT ProductID, QuantityOrdered
-            FROM OrderItem
-            WHERE OrderID = %s
-        """, (order_id,))
-
-        items = cursor.fetchall()
-
-        for item in items:
-            cursor.execute("""
-                UPDATE Product
-                SET Quantity = Quantity + %s
-                WHERE ProductID = %s
-            """, (item['QuantityOrdered'], item['ProductID']))
-
-        conn.commit()
-        print("✅ Order cancelled successfully")
-
-    except Exception as e:
-        conn.rollback()
-        print("❌ Error:", e)
-
-
 # =========================
-# USER / ANALYTICS
+# SHOW ORDERS
 # =========================
-def get_order_history(customer_id):
+def show_orders(user):
     cursor.execute("""
-        SELECT OrderID, OrderDateTime, OrderStatus, TotalBillAmount
+        SELECT OrderID, OrderStatus, TotalBillAmount
         FROM Orders
         WHERE CustomerID = %s
-        ORDER BY OrderDateTime DESC
-    """, (customer_id,))
+    """, (user,))
 
     orders = cursor.fetchall()
 
-    print("\n--- Order History ---")
-    for order in orders:
-        print(order)
+    for i, o in enumerate(orders, 1):
+        print(f"{i}. Order {o['OrderID']} | {o['OrderStatus']} | ₹{o['TotalBillAmount']}")
 
+    return orders
 
-# 🔥 FIXED USING JOIN
-def get_delivery_partner(order_id):
+# =========================
+# CANCEL ORDER
+# =========================
+def cancel_order(user):
+    orders = show_orders(user)
+    if not orders:
+        return
+
+    choice = safe_int("Select order: ")
+    if not choice or choice > len(orders):
+        return
+
+    oid = orders[choice-1]['OrderID']
+
+    cursor.execute("UPDATE Orders SET OrderStatus='Cancelled' WHERE OrderID=%s", (oid,))
+    conn.commit()
+
+    print("✅ Order cancelled")
+
+# =========================
+# ORDER HISTORY
+# =========================
+def order_history(user):
     cursor.execute("""
-        SELECT dp.PartnerID, dp.Name, dp.PhoneNumber, dp.VehicleDetails
+        SELECT o.OrderID, o.OrderStatus, p.ProductName, oi.QuantityOrdered
         FROM Orders o
-        JOIN DeliveryPartner dp ON o.DeliveryPartnerID = dp.PartnerID
-        WHERE o.OrderID = %s
-    """, (order_id,))
+        JOIN OrderItem oi ON o.OrderID = oi.OrderID
+        JOIN Product p ON oi.ProductID = p.ProductID
+        WHERE o.CustomerID = %s
+        ORDER BY o.OrderID DESC
+    """, (user,))
 
-    result = cursor.fetchone()
+    rows = cursor.fetchall()
 
-    if result:
-        print("\n--- Delivery Partner ---")
-        print(result)
-    else:
-        print("❌ Partner not found")
+    current = None
+    for r in rows:
+        if current != r['OrderID']:
+            current = r['OrderID']
+            print(f"\nOrder {r['OrderID']} ({r['OrderStatus']})")
 
+        print(f"  - {r['ProductName']} x{r['QuantityOrdered']}")
 
 # =========================
-# MAIN MENU
+# MENU
 # =========================
-def menu():
+def menu(user):
     while True:
-        print("\n========= MENU =========")
-        print("1. Search Products")
-        print("2. Add to Cart")
-        print("3. Checkout")
-        print("4. Cancel Order")
-        print("5. View Order History")
-        print("6. Delivery Partner Info")
-        print("7. Exit")
+        print("\n1.View Products\n2.Add to Cart\n3.View Cart\n4.Checkout\n5.Cancel Order\n6.Order History\n7.Exit")
 
-        choice = input("Enter choice: ")
+        choice = safe_int("Choice: ")
 
-        if choice == '1':
-            keyword = input("Enter keyword: ")
-            search_products(keyword)
-
-        elif choice == '2':
-            pid = int(input("Product ID: "))
-            qty = int(input("Quantity: "))
-            add_to_cart(pid, qty)
-
-        elif choice == '3':
-            cid = int(input("Customer ID: "))
-            checkout(cid)
-
-        elif choice == '4':
-            oid = int(input("Order ID: "))
-            cancel_order(oid)
-
-        elif choice == '5':
-            cid = int(input("Customer ID: "))
-            get_order_history(cid)
-
-        elif choice == '6':
-            oid = int(input("Order ID: "))
-            get_delivery_partner(oid)
-
-        elif choice == '7':
-            print("Exiting...")
+        if choice == 1:
+            show_products()
+        elif choice == 2:
+            add_to_cart(user)
+        elif choice == 3:
+            view_cart(user)
+        elif choice == 4:
+            checkout(user)
+        elif choice == 5:
+            cancel_order(user)
+        elif choice == 6:
+            order_history(user)
+        elif choice == 7:
             break
-
         else:
-            print("Invalid choice")
-
+            print("❌ Invalid")
 
 # =========================
-# RUN APP
+# RUN
 # =========================
-if __name__ == "__main__":
-    menu()
+user = login()
+if user:
+    menu(user)
