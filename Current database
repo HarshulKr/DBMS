@@ -1,0 +1,208 @@
+-- =========================
+-- RESET (Optional)
+-- =========================
+DROP DATABASE IF EXISTS minito_db;
+
+-- =========================
+-- CREATE DATABASE
+-- =========================
+CREATE DATABASE minito_db;
+USE minito_db;
+
+-- =========================
+-- CUSTOMER
+-- =========================
+CREATE TABLE Customer (
+    CustomerID INT AUTO_INCREMENT PRIMARY KEY,
+    Name VARCHAR(50) NOT NULL,
+    Email VARCHAR(50) UNIQUE,
+    Address VARCHAR(200),
+    PhoneNumber BIGINT UNIQUE
+);
+
+-- =========================
+-- PRODUCT
+-- =========================
+CREATE TABLE Product (
+    ProductID INT AUTO_INCREMENT PRIMARY KEY,
+    ProductName VARCHAR(50) NOT NULL,
+    Brand VARCHAR(50),
+    Price DECIMAL(10,2) CHECK (Price > 0),
+    Quantity INT CHECK (Quantity >= 0)
+);
+
+-- =========================
+-- DARK STORE
+-- =========================
+CREATE TABLE DarkStore (
+    StoreID INT AUTO_INCREMENT PRIMARY KEY,
+    StoreLocation VARCHAR(100) NOT NULL,
+    ProductQuantity INT CHECK (ProductQuantity >= 0)
+);
+
+-- =========================
+-- DELIVERY PARTNER
+-- =========================
+CREATE TABLE DeliveryPartner (
+    PartnerID INT AUTO_INCREMENT PRIMARY KEY,
+    Name VARCHAR(50) NOT NULL,
+    PhoneNumber BIGINT UNIQUE,
+    VehicleDetails VARCHAR(50),
+    DeliveryAreas VARCHAR(100),
+    DeliveryHistory VARCHAR(200)
+);
+
+-- =========================
+-- ORDERS
+-- =========================
+CREATE TABLE Orders (
+    OrderID INT AUTO_INCREMENT PRIMARY KEY,
+    OrderDateTime DATETIME,
+    OrderStatus VARCHAR(20)
+        CHECK (OrderStatus IN ('Placed','Delivered','Cancelled','In Transit')),
+    TotalBillAmount DECIMAL(10,2) CHECK (TotalBillAmount > 0),
+
+    CustomerID INT,
+    StoreID INT,
+    DeliveryPartnerID INT,
+
+    FOREIGN KEY (CustomerID)
+        REFERENCES Customer(CustomerID)
+        ON DELETE SET NULL,
+
+    FOREIGN KEY (StoreID)
+        REFERENCES DarkStore(StoreID)
+        ON DELETE SET NULL,
+
+    FOREIGN KEY (DeliveryPartnerID)
+        REFERENCES DeliveryPartner(PartnerID)
+        ON DELETE SET NULL
+);
+
+-- =========================
+-- ORDER ITEM
+-- =========================
+CREATE TABLE OrderItem (
+    OrderItemID INT AUTO_INCREMENT PRIMARY KEY,
+    OrderID INT,
+    ProductID INT,
+    QuantityOrdered INT CHECK (QuantityOrdered > 0),
+
+    FOREIGN KEY (OrderID)
+        REFERENCES Orders(OrderID)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (ProductID)
+        REFERENCES Product(ProductID)
+        ON DELETE SET NULL
+);
+
+-- =========================
+-- PAYMENT
+-- =========================
+CREATE TABLE Payment (
+    PaymentID INT AUTO_INCREMENT PRIMARY KEY,
+    PaymentMethod VARCHAR(30),
+    PaymentStatus VARCHAR(20)
+        CHECK (PaymentStatus IN ('Success','Failed','Pending')),
+    OrderID INT,
+
+    FOREIGN KEY (OrderID)
+        REFERENCES Orders(OrderID)
+        ON DELETE CASCADE
+);
+
+-- =========================
+-- INSERT DATA
+-- =========================
+
+-- CUSTOMER
+INSERT INTO Customer (Name, Email, Address, PhoneNumber) VALUES
+('Hansika','hansika@gmail.com','Delhi',9000000001),
+('Aanya','aanya@gmail.com','Noida',9000000002),
+('Charan','charan@gmail.com','Gurgaon',9000000003),
+('Diya','diya@gmail.com','Delhi',9000000004),
+('Esha','esha@gmail.com','Faridabad',9000000005),
+('Farhan','farhan@gmail.com','Noida',9000000006),
+('Harshul','harshul@gmail.com','Ghaziabad',9000000007),
+('Hina','hina@gmail.com','Delhi',9000000008),
+('Ishaan','ishaan@gmail.com','Noida',9000000009),
+('Jiya','jiya@gmail.com','Gurgaon',9000000010);
+
+-- PRODUCT
+INSERT INTO Product (ProductName, Brand, Price, Quantity) VALUES
+('Milk','Amul',55,100),
+('Bread','Britannia',40,120),
+('Eggs','FarmFresh',70,90),
+('Butter','Amul',60,80),
+('Cheese','Amul',120,50),
+('Rice','IndiaGate',90,200),
+('Wheat Flour','Aashirvaad',75,180),
+('Sugar','Tata',45,150),
+('Salt','Tata',20,300),
+('Cooking Oil','Fortune',150,70);
+
+-- DARK STORE
+INSERT INTO DarkStore (StoreLocation, ProductQuantity) VALUES
+('Noida Sector 62',500),
+('Delhi CP',450),
+('Gurgaon DLF',400),
+('Faridabad',350),
+('Ghaziabad',300),
+('Noida Sector 18',550),
+('Delhi Rohini',420),
+('Delhi Saket',380),
+('Gurgaon Udyog Vihar',460),
+('Noida Sector 137',520);
+
+-- DELIVERY PARTNER
+INSERT INTO DeliveryPartner (Name, PhoneNumber, VehicleDetails, DeliveryAreas, DeliveryHistory) VALUES
+('Ramesh',9001111111,'Bike','Noida','Good'),
+('Suresh',9001111112,'Scooter','Delhi','Excellent'),
+('Amit',9001111113,'Bike','Gurgaon','Good'),
+('Nikhil',9001111114,'Car','Delhi','Very Good'),
+('Vikas',9001111115,'Bike','Faridabad','Good'),
+('Pankaj',9001111116,'Scooter','Noida','Excellent'),
+('Rohit',9001111117,'Bike','Ghaziabad','Good'),
+('Kunal',9001111118,'Car','Delhi','Very Good'),
+('Manish',9001111119,'Bike','Gurgaon','Good'),
+('Arjun',9001111120,'Scooter','Noida','Excellent');
+
+-- ORDERS
+INSERT INTO Orders (OrderDateTime, OrderStatus, TotalBillAmount, CustomerID, StoreID, DeliveryPartnerID) VALUES
+('2026-02-01 10:00','Placed',165,1,1,1),
+('2026-02-01 10:05','Delivered',200,2,2,2),
+('2026-02-01 10:10','In Transit',90,3,3,3),
+('2026-02-01 10:15','Placed',120,4,4,4),
+('2026-02-01 10:20','Delivered',250,5,5,5),
+('2026-02-01 10:25','In Transit',300,6,6,6),
+('2026-02-01 10:30','Placed',180,7,7,7),
+('2026-02-01 10:35','Delivered',220,8,8,8),
+('2026-02-01 10:40','Cancelled',75,9,9,9),
+('2026-02-01 10:45','Placed',140,10,10,10);
+
+-- ORDER ITEM
+INSERT INTO OrderItem (OrderID, ProductID, QuantityOrdered) VALUES
+(1,1,2),
+(2,2,1),
+(3,3,1),
+(4,4,2),
+(5,5,1),
+(6,6,3),
+(7,7,2),
+(8,8,2),
+(9,9,1),
+(10,10,1);
+
+-- PAYMENT
+INSERT INTO Payment (PaymentMethod, PaymentStatus, OrderID) VALUES
+('UPI','Success',1),
+('Card','Success',2),
+('Cash','Pending',3),
+('UPI','Success',4),
+('Card','Success',5),
+('UPI','Pending',6),
+('Cash','Success',7),
+('Card','Success',8),
+('UPI','Failed',9),
+('Cash','Success',10);
