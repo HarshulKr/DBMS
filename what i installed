@@ -1,0 +1,2 @@
+PYTHON MY SQL CONNECTOR
+pip install mysql-connector-python
