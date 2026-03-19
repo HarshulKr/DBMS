@@ -109,6 +109,7 @@ CREATE TABLE Cart (
 -- =========================
 -- TEMP NUMBERS TABLE (for 200 rows)
 -- =========================
+DROP TEMPORARY TABLE IF EXISTS nums;
 CREATE TEMPORARY TABLE nums AS
 SELECT a.N + b.N*10 + c.N*100 + 1 AS n
 FROM 
