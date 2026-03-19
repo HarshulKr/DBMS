@@ -1,0 +1,279 @@
+import streamlit as st
+import mysql.connector
+import random
+
+# =========================
+# DB CONNECTION
+# =========================
+conn = mysql.connector.connect(
+    host="localhost",
+    user="root",
+    password="hansika",
+    database="minito_db"
+)
+cursor = conn.cursor(dictionary=True)
+
+# =========================
+# SESSION STATE
+# =========================
+if "user" not in st.session_state:
+    st.session_state.user = None
+
+if "role" not in st.session_state:
+    st.session_state.role = None
+
+if "msg" not in st.session_state:
+    st.session_state.msg = ""
+
+# =========================
+# GLOBAL MESSAGE
+# =========================
+if st.session_state.msg:
+    st.success(st.session_state.msg)
+    st.session_state.msg = ""
+
+# =========================
+# LOGIN (UPDATED)
+# =========================
+def login():
+    st.title("🛒 Mini Blinkit")
+
+    role = st.selectbox("Login as", ["Customer", "Admin", "Store Manager", "Delivery Partner"])
+    email = st.text_input("Enter Email")
+
+    if st.button("Login"):
+        try:
+            if role == "Customer":
+                cursor.execute("SELECT CustomerID, Name FROM Customer WHERE Email=%s", (email,))
+            elif role == "Admin":
+                cursor.execute("SELECT AdminID, Name FROM Admin WHERE Email=%s", (email,))
+            elif role == "Store Manager":
+                cursor.execute("SELECT ManagerID, Name FROM StoreManager WHERE Email=%s", (email,))
+            elif role == "Delivery Partner":
+                cursor.execute("SELECT PartnerID, Name FROM DeliveryPartner WHERE Name=%s", (email,))
+
+            user = cursor.fetchone()
+
+            if user:
+                st.session_state.user = user
+                st.session_state.role = role
+                st.session_state.msg = f"Welcome {user['Name']}"
+                st.rerun()
+            else:
+                st.error("User not found")
+
+        except Exception as e:
+            st.error(str(e))
+
+# =========================
+# CUSTOMER FUNCTIONS (UNCHANGED LOGIC)
+# =========================
+def show_products():
+    st.subheader("🛍 Products")
+
+    cursor.execute("""
+        SELECT p.ProductID, p.ProductName, p.Price,
+               COALESCE(SUM(si.Quantity),0) as Quantity
+        FROM Product p
+        LEFT JOIN StoreInventory si ON p.ProductID = si.ProductID
+        GROUP BY p.ProductID
+        LIMIT 15
+    """)
+
+    products = cursor.fetchall()
+
+    for p in products:
+        st.write(f"{p['ProductName']} | ₹{p['Price']} | Stock: {p['Quantity']}")
+
+        qty = st.number_input(
+            f"Qty {p['ProductID']}",
+            min_value=1,
+            max_value=max(1, int(p['Quantity'])),
+            key=f"qty_{p['ProductID']}"
+        )
+
+        if st.button(f"Add product{p['ProductID']}"):
+            try:
+                cursor.execute("""
+                    SELECT Quantity FROM Cart
+                    WHERE CustomerID=%s AND ProductID=%s
+                """, (st.session_state.user['CustomerID'], p['ProductID']))
+
+                existing = cursor.fetchone()
+
+                if existing:
+                    cursor.execute("""
+                        UPDATE Cart
+                        SET Quantity = Quantity + %s
+                        WHERE CustomerID=%s AND ProductID=%s
+                    """, (qty, st.session_state.user['CustomerID'], p['ProductID']))
+                else:
+                    cursor.execute("""
+                        INSERT INTO Cart (CustomerID, ProductID, Quantity)
+                        VALUES (%s, %s, %s)
+                    """, (st.session_state.user['CustomerID'], p['ProductID'], qty))
+
+                conn.commit()
+                st.session_state.msg = f"✅ Added {p['ProductName']}"
+                st.rerun()
+
+            except Exception as e:
+                st.error(str(e))
+
+def search_products():
+    st.subheader("🔍 Search")
+
+    keyword = st.text_input("Search product")
+
+    if keyword:
+        cursor.execute("""
+            SELECT ProductID, ProductName, Price
+            FROM Product
+            WHERE ProductName LIKE %s OR Brand LIKE %s
+        """, (f"%{keyword}%", f"%{keyword}%"))
+
+        results = cursor.fetchall()
+
+        for p in results:
+            st.write(f"{p['ProductName']} | ₹{p['Price']}")
+
+def view_cart():
+    st.subheader("🧺 Cart")
+
+    cursor.execute("""
+        SELECT c.ProductID, p.ProductName, c.Quantity, p.Price
+        FROM Cart c
+        JOIN Product p ON c.ProductID = p.ProductID
+        WHERE c.CustomerID = %s
+    """, (st.session_state.user['CustomerID'],))
+
+    items = cursor.fetchall()
+
+    if not items:
+        st.warning("Cart empty")
+        return
+
+    total = 0
+
+    for item in items:
+        st.write(f"{item['ProductName']} x{item['Quantity']}")
+        total += item['Quantity'] * item['Price']
+
+    st.write(f"### Total: ₹{total}")
+
+    if st.button("🛒 Checkout"):
+        try:
+            store_id = random.randint(1, 10)
+            partner_id = random.randint(1, 10)
+
+            cursor.execute("""
+                INSERT INTO Orders 
+                (OrderDateTime, OrderStatus, TotalBillAmount, CustomerID, StoreID, DeliveryPartnerID)
+                VALUES (NOW(), 'Placed', %s, %s, %s, %s)
+            """, (total, st.session_state.user['CustomerID'], store_id, partner_id))
+
+            order_id = cursor.lastrowid
+
+            for item in items:
+                cursor.execute("""
+                    INSERT INTO OrderItem (OrderID, ProductID, QuantityOrdered)
+                    VALUES (%s, %s, %s)
+                """, (order_id, item['ProductID'], item['Quantity']))
+
+            cursor.execute("DELETE FROM Cart WHERE CustomerID=%s", (st.session_state.user['CustomerID'],))
+            conn.commit()
+
+            st.session_state.msg = f"✅ Order placed! ID: {order_id}"
+            st.rerun()
+
+        except Exception as e:
+            conn.rollback()
+            st.error(str(e))
+
+def orders():
+    st.subheader("📦 Orders")
+
+    cursor.execute("""
+        SELECT OrderID, OrderStatus, TotalBillAmount
+        FROM Orders
+        WHERE CustomerID = %s
+        ORDER BY OrderID DESC
+    """, (st.session_state.user['CustomerID'],))
+
+    orders = cursor.fetchall()
+
+    for o in orders:
+        st.write(f"Order {o['OrderID']} | {o['OrderStatus']} | ₹{o['TotalBillAmount']}")
+
+# =========================
+# ADMIN PANEL
+# =========================
+def admin_panel():
+    st.title("👨‍💼 Admin Dashboard")
+
+    cursor.execute("SELECT COUNT(*) as total FROM Orders")
+    st.write("Total Orders:", cursor.fetchone()['total'])
+
+    cursor.execute("SELECT SUM(TotalBillAmount) as revenue FROM Orders")
+    st.write("Revenue:", cursor.fetchone()['revenue'])
+
+# =========================
+# STORE MANAGER PANEL
+# =========================
+def manager_panel():
+    st.title("🏪 Store Manager")
+
+    cursor.execute("""
+        SELECT si.ProductID, p.ProductName, si.Quantity
+        FROM StoreInventory si
+        JOIN Product p ON si.ProductID = p.ProductID
+        LIMIT 20
+    """)
+
+    items = cursor.fetchall()
+
+    for item in items:
+        st.write(f"{item['ProductName']} - {item['Quantity']}")
+
+# =========================
+# DELIVERY PANEL
+# =========================
+def delivery_panel():
+    st.title("🚚 Delivery")
+
+    cursor.execute("SELECT * FROM Orders LIMIT 20")
+    orders = cursor.fetchall()
+
+    for o in orders:
+        st.write(f"Order {o['OrderID']} - {o['OrderStatus']}")
+
+# =========================
+# MAIN
+# =========================
+if not st.session_state.user:
+    login()
+else:
+    st.sidebar.title("Menu")
+
+    role = st.session_state.role
+
+    if role == "Customer":
+        choice = st.sidebar.radio("Go to", ["Products", "Search", "Cart", "Orders"])
+
+        if choice == "Products":
+            show_products()
+        elif choice == "Search":
+            search_products()
+        elif choice == "Cart":
+            view_cart()
+        elif choice == "Orders":
+            orders()
+
+    elif role == "Admin":
+        admin_panel()
+
+    elif role == "Store Manager":
+        manager_panel()
+
+    elif role == "Delivery Partner":
+        delivery_panel()
